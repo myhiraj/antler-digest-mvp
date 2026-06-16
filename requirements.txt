@@ -47,3 +47,7 @@ uvicorn==0.49.0
 uvloop==0.22.1
 watchfiles==1.2.0
 websockets==16.0
+APScheduler==3.11.2
+beautifulsoup4==4.15.0
+soupsieve==2.8.4
+voyageai==0.4.0
