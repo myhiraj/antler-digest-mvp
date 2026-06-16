@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from app.services.cleaner import clean_email
-from app.services.document_store import document_exists, save_document, save_chunks
+from app.services.document_store import (
+    document_exists,
+    save_document,
+    save_chunks,
+    get_last_polled,
+    set_last_polled,
+)
 from app.services.chunker import chunk_text
 from app.services.embedder import embed_chunks
 from app.models.document import Document
@@ -14,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 RSS_FEEDS = [
     {"url": "https://www.wamda.com/feed", "topic_id": "menap_general", "source": "wamda"},
-    {"url": "https://www.menabytes.com/feed/", "topic_id": "menap_general", "source": "menabytes"},
+    {"url": "https://www.menabytes.com/feed/rss/", "topic_id": "menap_general", "source": "menabytes"},
+    {"url": "https://menastartupdigest.com/feed", "topic_id": "menap_general", "source": "mena_startup_digest"},
     {"url": "https://www.notboring.co/feed", "topic_id": "global_vc", "source": "not_boring"},
     {"url": "https://news.crunchbase.com/feed/", "topic_id": "global_vc", "source": "crunchbase"},
 ]
@@ -28,21 +35,31 @@ async def poll_rss_feeds() -> None:
 
 
 async def _poll_feed(url: str, topic_id: str, source: str) -> None:
+    last_polled = await get_last_polled(source)
+    poll_started_at = datetime.now(timezone.utc)
+
     feed = feedparser.parse(url)
+    ingested = 0
 
     for entry in feed.entries:
         raw_text = entry.get("summary") or entry.get("content", [{}])[0].get("value", "")
         if not raw_text:
             continue
 
+        try:
+            published_at = parsedate_to_datetime(entry.get("published", ""))
+            if published_at.tzinfo is None:
+                published_at = published_at.replace(tzinfo=timezone.utc)
+        except Exception:
+            published_at = poll_started_at
+
+        # skip entries we've already seen in a previous poll
+        if last_polled and published_at <= last_polled:
+            continue
+
         content_hash = hashlib.sha256(raw_text.encode()).hexdigest()
         if await document_exists(content_hash):
             continue
-
-        try:
-            published_at = parsedate_to_datetime(entry.get("published", ""))
-        except Exception:
-            published_at = datetime.now(timezone.utc)
 
         clean_text = clean_email(raw_text)
         doc = Document(
@@ -52,7 +69,7 @@ async def _poll_feed(url: str, topic_id: str, source: str) -> None:
             raw_text=raw_text,
             clean_text=clean_text,
             content_hash=content_hash,
-            ingested_at=datetime.now(timezone.utc),
+            ingested_at=poll_started_at,
             published_at=published_at,
         )
 
@@ -63,3 +80,7 @@ async def _poll_feed(url: str, topic_id: str, source: str) -> None:
         await save_chunks(chunks)
 
         logger.info(f"Ingested RSS entry from {source}: {entry.get('title', '')}")
+        ingested += 1
+
+    await set_last_polled(source, poll_started_at)
+    logger.info(f"Polled {source}: {ingested} new entries")
