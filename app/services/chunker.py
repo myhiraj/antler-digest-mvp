@@ -22,6 +22,8 @@ def chunk_text(doc: Document) -> List[Chunk]:
             chunk_index=index,
         ))
         index += 1
+        if end >= len(words):
+            break
         start += CHUNK_SIZE - OVERLAP
 
     return chunks
