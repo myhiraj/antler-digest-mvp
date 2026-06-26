@@ -16,8 +16,8 @@ scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(poll_rss_feeds, "cron", hour=8, minute=10, timezone="UTC", id="rss_poller")
-    scheduler.add_job(generate_daily_digest, "cron", hour=8, minute=20, timezone="UTC", id="daily_digest")
+    scheduler.add_job(poll_rss_feeds, "cron", hour=7, minute=5, timezone="UTC", id="rss_poller")
+    scheduler.add_job(generate_daily_digest, "cron", hour=7, minute=15, timezone="UTC", id="daily_digest")
     scheduler.start()
     logger.info("Scheduler started")
     yield
