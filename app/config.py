@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     mongodb_uri: str
     voyage_api_key: str
-    postmark_webhook_token: str
+    postmark_webhook_token: str = ""
     anthropic_api_key: str
 
     @property

@@ -36,7 +36,7 @@ async def process_document(doc: Document) -> None:
 
 @router.post("/inbound")
 async def receive_email(request: Request, background_tasks: BackgroundTasks, token: str = ""):
-    if token != settings.postmark_webhook_token:
+    if settings.postmark_webhook_token and token != settings.postmark_webhook_token:
         raise HTTPException(status_code=401, detail="Unauthorised")
 
     try:
