@@ -1,7 +1,8 @@
+import asyncio
 import feedparser
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from app.services.cleaner import clean_email
@@ -53,6 +54,10 @@ async def _poll_feed(url: str, topic_id: str, source: str) -> None:
         except Exception:
             published_at = poll_started_at
 
+        # skip entries older than 1 week (guards against stale last_polled after downtime)
+        if published_at < poll_started_at - timedelta(days=7):
+            continue
+
         # skip entries we've already seen in a previous poll
         if last_polled and published_at <= last_polled:
             continue
@@ -81,6 +86,7 @@ async def _poll_feed(url: str, topic_id: str, source: str) -> None:
 
         logger.info(f"Ingested RSS entry from {source}: {entry.get('title', '')}")
         ingested += 1
+        await asyncio.sleep(20)  # stay under 3 RPM free tier limit
 
     await set_last_polled(source, poll_started_at)
     logger.info(f"Polled {source}: {ingested} new entries")

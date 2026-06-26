@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.routes.inbound import router as inbound_router
 from app.jobs.rss_poller import poll_rss_feeds
+from app.jobs.digest_job import generate_daily_digest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,7 +16,8 @@ scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(poll_rss_feeds, "interval", hours=6, id="rss_poller")
+    scheduler.add_job(poll_rss_feeds, "cron", hour=8, minute=10, timezone="UTC", id="rss_poller")
+    scheduler.add_job(generate_daily_digest, "cron", hour=8, minute=20, timezone="UTC", id="daily_digest")
     scheduler.start()
     logger.info("Scheduler started")
     yield

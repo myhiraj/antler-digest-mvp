@@ -42,6 +42,14 @@ index_definition = {
                 "type": "filter",
                 "path": "topic_id",
             },
+            {
+                "type": "filter",
+                "path": "ingested_at",
+            },
+            {
+                "type": "filter",
+                "path": "used_in_digest",
+            },
         ]
     },
 }

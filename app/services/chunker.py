@@ -20,6 +20,7 @@ def chunk_text(doc: Document) -> List[Chunk]:
             topic_id=doc.topic_id,
             text=" ".join(chunk_words),
             chunk_index=index,
+            ingested_at=doc.ingested_at,
         ))
         index += 1
         if end >= len(words):

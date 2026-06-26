@@ -39,7 +39,7 @@ def _make_feed(entries):
 async def test_new_entry_ingested(
     mock_parse, mock_get, mock_set, mock_exists, mock_save, mock_save_chunks, mock_chunk, mock_embed
 ):
-    pub = datetime(2026, 6, 17, 9, 0, 0, tzinfo=timezone.utc)
+    pub = datetime(2026, 6, 25, 9, 0, 0, tzinfo=timezone.utc)
     mock_parse.return_value = _make_feed([_make_entry("Article A", "Body of article A", pub)])
 
     await _poll_feed("https://example.com/feed", "menap_general", "test_source")

@@ -28,7 +28,7 @@ def test_embed_chunks_populates_embeddings():
     mock_result = _mock_voyage_result(3)
     with patch.object(embedder._client, "embed", return_value=mock_result) as mock_embed:
         out = embedder.embed_chunks(chunks)
-    mock_embed.assert_called_once_with([c.text for c in chunks], model="voyage-3")
+    mock_embed.assert_called_once_with([c.text for c in chunks], model="voyage-3", input_type="document")
     assert all(c.embedding is not None for c in out)
 
 

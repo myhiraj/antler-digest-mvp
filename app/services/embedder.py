@@ -11,7 +11,7 @@ def embed_chunks(chunks: List[Chunk]) -> List[Chunk]:
         return chunks
 
     texts = [c.text for c in chunks]
-    result = _client.embed(texts, model="voyage-3")
+    result = _client.embed(texts, model="voyage-3", input_type="document")
 
     for chunk, embedding in zip(chunks, result.embeddings):
         chunk.embedding = embedding
