@@ -32,7 +32,12 @@ async def save_chunks(chunks: List[Chunk]) -> None:
 
 async def get_last_polled(source: str) -> Optional[datetime]:
     doc = await _poll_state.find_one({"source": source})
-    return doc["last_polled_at"] if doc else None
+    if not doc:
+        return None
+    ts = doc.get("last_polled_at")
+    if ts and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
 
 
 async def set_last_polled(source: str, ts: datetime) -> None:
