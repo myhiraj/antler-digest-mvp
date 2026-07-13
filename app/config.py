@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     voyage_api_key: str
     postmark_webhook_token: str = ""
     anthropic_api_key: str
+    harmonic_api_key: str = ""
 
     @property
     def mongodb_uri_with_tls(self) -> str:

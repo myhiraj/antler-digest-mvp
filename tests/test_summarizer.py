@@ -172,3 +172,97 @@ async def test_summarize_topic_sets_chunk_count():
         result = await summarize_topic("menap_general", chunks)
 
     assert result.chunk_count == 5
+
+
+@pytest.mark.asyncio
+async def test_summarize_topic_records_enriched_domains():
+    chunks = [_make_chunk()]
+    enrichment = {"leantech.me": {"name": "Lean Technologies", "headcount": 159}}
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = AsyncMock(return_value=_fake_message())
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        result = await summarize_topic("menap_general", chunks, enrichment)
+
+    assert result.companies_enriched == ["leantech.me"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_topic_prompt_weaves_in_enrichment_facts():
+    chunks = [_make_chunk()]
+    enrichment = {"leantech.me": {"name": "Lean Technologies", "headcount": 159}}
+    captured = {}
+
+    async def capture_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _fake_message()
+
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = capture_create
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        await summarize_topic("menap_general", chunks, enrichment)
+
+    user_content = captured["messages"][0]["content"]
+    assert "Lean Technologies" in user_content
+    assert "headcount=159" in user_content
+    assert "do not list this data separately" in user_content.lower()
+
+
+@pytest.mark.asyncio
+async def test_summarize_topic_no_enrichment_section_when_empty():
+    chunks = [_make_chunk()]
+    captured = {}
+
+    async def capture_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _fake_message()
+
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = capture_create
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        await summarize_topic("menap_general", chunks)
+
+    user_content = captured["messages"][0]["content"]
+    assert "Company data" not in user_content
+
+
+@pytest.mark.asyncio
+async def test_extract_companies_returns_tool_input():
+    chunks = [_make_chunk()]
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "extract_companies"
+    tool_block.input = {"companies": [{"name": "Lean Technologies", "domain": "leantech.me"}]}
+    message = MagicMock()
+    message.content = [tool_block]
+
+    with patch("app.services.summarizer._client") as mock_client:
+        mock_client.messages.create = AsyncMock(return_value=message)
+
+        from app.services.summarizer import extract_companies
+        result = await extract_companies(chunks)
+
+    assert result == [{"name": "Lean Technologies", "domain": "leantech.me"}]
+
+
+@pytest.mark.asyncio
+async def test_extract_companies_empty_chunks_skips_api_call():
+    with patch("app.services.summarizer._client") as mock_client:
+        mock_client.messages.create = AsyncMock()
+
+        from app.services.summarizer import extract_companies
+        result = await extract_companies([])
+
+    mock_client.messages.create.assert_not_called()
+    assert result == []

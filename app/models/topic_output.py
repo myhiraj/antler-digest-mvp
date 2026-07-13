@@ -11,3 +11,4 @@ class TopicOutput(BaseModel):
     generated_at: datetime
     model_used: str = "claude-sonnet-4-6"
     chunk_count: int = 0
+    companies_enriched: List[str] = []

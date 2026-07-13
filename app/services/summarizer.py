@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, date, timezone
-from typing import List
+from typing import Any, Dict, List
 
 from anthropic import AsyncAnthropic
 
@@ -15,6 +15,62 @@ _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 2048
+
+EXTRACT_COMPANIES_TOOL = {
+    "name": "extract_companies",
+    "description": "Record the startups/companies mentioned in the source excerpts, with their website domain if known.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "companies": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "domain": {
+                            "type": "string",
+                            "description": "Website domain, e.g. 'leantech.me'. Omit if not stated or not confidently known.",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            }
+        },
+        "required": ["companies"],
+    },
+}
+
+
+async def extract_companies(chunks: List[Chunk]) -> List[Dict[str, str]]:
+    """Ask Claude to identify companies mentioned in the chunks and their
+    website domains, so they can be looked up in Harmonic. Returns a list
+    of {"name": ..., "domain": ...} dicts; domain is omitted when unknown."""
+    if not chunks:
+        return []
+
+    context_blocks = "\n\n".join(f"[{i + 1}] {c.text}" for i, c in enumerate(chunks))
+    message = await _client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        tools=[EXTRACT_COMPANIES_TOOL],
+        tool_choice={"type": "tool", "name": "extract_companies"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Identify every distinct startup/company mentioned in these excerpts, "
+                    "with its website domain if stated or confidently known. Do not guess "
+                    "domains.\n\n---\n" + context_blocks
+                ),
+            }
+        ],
+    )
+
+    for block in message.content:
+        if block.type == "tool_use" and block.name == "extract_companies":
+            return block.input.get("companies", [])
+    return []
 
 SYSTEM_PROMPT = """\
 You are a senior analyst at Antler MENAP, the leading early-stage VC fund in the \
@@ -36,11 +92,50 @@ TOPIC_LABELS = {
 }
 
 
-def _build_user_prompt(topic_id: str, chunks: List[Chunk], digest_date: date) -> str:
+def _build_enrichment_block(enrichment: Dict[str, Dict[str, Any]]) -> str:
+    if not enrichment:
+        return ""
+
+    lines = []
+    for domain, payload in enrichment.items():
+        name = payload.get("name", domain)
+        headcount = payload.get("headcount")
+        funding = payload.get("funding", {}) or {}
+        funding_total = funding.get("funding_total")
+        funding_stage = funding.get("funding_stage")
+        location = (payload.get("location") or {}).get("address_formatted")
+
+        facts = [f"name={name}"]
+        if headcount is not None:
+            facts.append(f"headcount={headcount}")
+        if funding_total is not None:
+            facts.append(f"total_funding_usd={funding_total}")
+        if funding_stage:
+            facts.append(f"funding_stage={funding_stage}")
+        if location:
+            facts.append(f"location={location}")
+        lines.append(f"- {domain}: " + ", ".join(facts))
+
+    return (
+        "\n\nCompany data (from Harmonic, for the companies mentioned above). "
+        "Weave the relevant facts into your prose naturally where they add "
+        "context — do not list this data separately or refer to it as a "
+        "'dataset' or 'Harmonic'. Only use a fact if it's relevant to the point "
+        "being made:\n" + "\n".join(lines)
+    )
+
+
+def _build_user_prompt(
+    topic_id: str,
+    chunks: List[Chunk],
+    digest_date: date,
+    enrichment: Dict[str, Dict[str, Any]] = None,
+) -> str:
     label = TOPIC_LABELS.get(topic_id, topic_id)
     context_blocks = "\n\n".join(
         f"[{i + 1}] {chunk.text}" for i, chunk in enumerate(chunks)
     )
+    enrichment_block = _build_enrichment_block(enrichment or {})
 
     menap_section = ""
     if topic_id == "menap_general":
@@ -59,8 +154,9 @@ Below are {len(chunks)} excerpts from newsletters and news sources ingested toda
 ---
 {context_blocks}
 ---
+{enrichment_block}
 
-Using only the information in the excerpts above, write the daily digest with the following sections in markdown:
+Using only the information in the excerpts above (plus the company data, if provided), write the daily digest with the following sections in markdown:
 
 ### Key Deals & Funding
 Rounds closed, tranches announced, notable investors involved.
@@ -86,7 +182,11 @@ Acquisitions, secondary sales, public listings — only if present in the contex
 Keep each section tight. Use bullet points. No filler. No hallucination."""
 
 
-async def summarize_topic(topic_id: str, chunks: List[Chunk]) -> TopicOutput:
+async def summarize_topic(
+    topic_id: str,
+    chunks: List[Chunk],
+    enrichment: Dict[str, Dict[str, Any]] = None,
+) -> TopicOutput:
     digest_date = date.today()
 
     if not chunks:
@@ -101,7 +201,7 @@ async def summarize_topic(topic_id: str, chunks: List[Chunk]) -> TopicOutput:
         await document_store.save_topic_output(output)
         return output
 
-    user_prompt = _build_user_prompt(topic_id, chunks, digest_date)
+    user_prompt = _build_user_prompt(topic_id, chunks, digest_date, enrichment)
 
     message = await _client.messages.create(
         model=MODEL,
@@ -121,6 +221,7 @@ async def summarize_topic(topic_id: str, chunks: List[Chunk]) -> TopicOutput:
         generated_at=datetime.now(timezone.utc),
         model_used=MODEL,
         chunk_count=len(chunks),
+        companies_enriched=list((enrichment or {}).keys()),
     )
     await document_store.save_topic_output(output)
     return output

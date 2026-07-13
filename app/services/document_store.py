@@ -3,8 +3,9 @@ from app.config import settings
 from app.models.document import Document
 from app.models.chunk import Chunk
 from app.models.topic_output import TopicOutput
+from app.models.company_enrichment import CompanyEnrichment
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _client = motor.motor_asyncio.AsyncIOMotorClient(settings.mongodb_uri_with_tls)
 _db = _client["vc_digest"]
@@ -12,6 +13,9 @@ _documents = _db["documents"]
 _chunks = _db["chunks"]
 _poll_state = _db["poll_state"]
 _topic_outputs = _db["topic_outputs"]
+_company_enrichments = _db["company_enrichments"]
+
+COMPANY_ENRICHMENT_TTL = timedelta(days=7)
 
 
 async def document_exists(content_hash: str) -> bool:
@@ -79,4 +83,25 @@ async def mark_chunks_used(chunks: List[Chunk]) -> None:
     await _chunks.update_many(
         {"$or": ops},
         {"$set": {"used_in_digest": True}},
+    )
+
+
+async def get_cached_enrichments(domains: List[str]) -> dict:
+    """Return {domain: payload} for domains with a not-yet-stale cached
+    Harmonic lookup, so unchanged companies aren't re-fetched every digest."""
+    if not domains:
+        return {}
+    cutoff = datetime.now(timezone.utc) - COMPANY_ENRICHMENT_TTL
+    cursor = _company_enrichments.find(
+        {"domain": {"$in": domains}, "fetched_at": {"$gte": cutoff}}
+    )
+    return {doc["domain"]: doc["payload"] async for doc in cursor}
+
+
+async def save_company_enrichment(enrichment: CompanyEnrichment) -> None:
+    data = enrichment.model_dump()
+    await _company_enrichments.update_one(
+        {"domain": enrichment.domain},
+        {"$set": data},
+        upsert=True,
     )
