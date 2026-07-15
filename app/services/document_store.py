@@ -4,6 +4,7 @@ from app.models.document import Document
 from app.models.chunk import Chunk
 from app.models.topic_output import TopicOutput
 from app.models.company_enrichment import CompanyEnrichment
+from app.models.subscriber import Subscriber
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,7 @@ _chunks = _db["chunks"]
 _poll_state = _db["poll_state"]
 _topic_outputs = _db["topic_outputs"]
 _company_enrichments = _db["company_enrichments"]
+_subscribers = _db["subscribers"]
 
 COMPANY_ENRICHMENT_TTL = timedelta(days=7)
 
@@ -105,3 +107,36 @@ async def save_company_enrichment(enrichment: CompanyEnrichment) -> None:
         {"$set": data},
         upsert=True,
     )
+
+
+async def add_subscription(slack_user_id: str, topic_ids: List[str]) -> Subscriber:
+    await _subscribers.update_one(
+        {"slack_user_id": slack_user_id},
+        {
+            "$addToSet": {"topic_ids": {"$each": topic_ids}},
+            "$setOnInsert": {"subscribed_at": datetime.now(timezone.utc)},
+        },
+        upsert=True,
+    )
+    return await get_subscriber(slack_user_id)
+
+
+async def remove_subscription(slack_user_id: str, topic_ids: List[str]) -> Subscriber:
+    await _subscribers.update_one(
+        {"slack_user_id": slack_user_id},
+        {"$pull": {"topic_ids": {"$in": topic_ids}}},
+    )
+    return await get_subscriber(slack_user_id)
+
+
+async def get_subscriber(slack_user_id: str) -> Optional[Subscriber]:
+    doc = await _subscribers.find_one({"slack_user_id": slack_user_id})
+    if doc is None:
+        return None
+    doc.pop("_id", None)
+    return Subscriber(**doc)
+
+
+async def get_subscribers_for_topic(topic_id: str) -> List[Subscriber]:
+    cursor = _subscribers.find({"topic_ids": topic_id})
+    return [Subscriber(**{k: v for k, v in doc.items() if k != "_id"}) async for doc in cursor]

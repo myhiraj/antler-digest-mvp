@@ -9,8 +9,11 @@ from app.services.document_store import (
     save_topic_output,
     get_cached_enrichments,
     save_company_enrichment,
+    get_subscribers_for_topic,
 )
+from app.services.slack_client import send_dm
 from app.models.company_enrichment import CompanyEnrichment
+from app.models.topic_output import TopicOutput
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,21 @@ async def _get_company_enrichment(chunks) -> dict:
     return {**cached, **fresh}
 
 
+async def _deliver_digest(topic_id: str, output: TopicOutput) -> None:
+    """DM the digest to every subscriber of this topic. A failure sending
+    to one user must not stop delivery to the rest."""
+    subscribers = await get_subscribers_for_topic(topic_id)
+    if not subscribers:
+        logger.info("No subscribers for topic_id=%r, skipping delivery", topic_id)
+        return
+
+    sent = 0
+    for subscriber in subscribers:
+        if await send_dm(subscriber.slack_user_id, output.summary_text):
+            sent += 1
+    logger.info("Delivered digest for topic_id=%r to %d/%d subscribers", topic_id, sent, len(subscribers))
+
+
 async def generate_daily_digest() -> None:
     logger.info("Starting daily digest generation for %s", date.today().isoformat())
     for topic_id in TOPIC_IDS:
@@ -74,6 +92,7 @@ async def generate_daily_digest() -> None:
                 len(output.companies_enriched),
                 output.date,
             )
+            await _deliver_digest(topic_id, output)
         except Exception:
             logger.exception("Digest generation failed for topic_id=%r", topic_id)
     logger.info("Daily digest generation complete")

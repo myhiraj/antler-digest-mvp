@@ -5,6 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from app.routes.inbound import router as inbound_router
+from app.routes.slack import router as slack_router
 from app.jobs.rss_poller import poll_rss_feeds
 from app.jobs.digest_job import generate_daily_digest
 
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="VC Digest Ingestion", lifespan=lifespan)
 app.include_router(inbound_router)
+app.include_router(slack_router)
 
 
 @app.get("/health")

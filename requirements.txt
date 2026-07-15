@@ -52,3 +52,4 @@ beautifulsoup4==4.15.0
 soupsieve==2.8.4
 voyageai==0.4.0
 anthropic>=0.40.0
+slack-sdk==3.43.0

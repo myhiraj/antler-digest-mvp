@@ -41,11 +41,21 @@ def _patch_mark_chunks_used():
     return patch("app.jobs.digest_job.mark_chunks_used", new_callable=AsyncMock)
 
 
+def _patch_no_delivery():
+    """get_subscribers_for_topic hits real Mongo if unmocked. Return no
+    subscribers so _deliver_digest short-circuits without touching Slack."""
+    return patch(
+        "app.jobs.digest_job.get_subscribers_for_topic",
+        new_callable=AsyncMock,
+        return_value=[],
+    )
+
+
 @pytest.mark.asyncio
 async def test_generate_daily_digest_calls_both_topics():
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = [_fake_chunk()]
         mock_summarize.side_effect = lambda tid, _chunks, _enrichment=None: _fake_output(tid)
@@ -66,7 +76,7 @@ async def test_generate_daily_digest_passes_chunks_to_summarizer():
 
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = chunks
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
@@ -90,7 +100,7 @@ async def test_generate_daily_digest_continues_on_topic_failure():
 
     with patch("app.jobs.digest_job.retrieve_chunks", side_effect=flaky_retrieve), \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
 
@@ -106,7 +116,7 @@ async def test_generate_daily_digest_continues_on_topic_failure():
 async def test_generate_daily_digest_uses_broad_query():
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = []
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
@@ -130,7 +140,7 @@ async def test_generate_daily_digest_enriches_companies_from_harmonic():
          patch("app.jobs.digest_job.get_cached_enrichments", new_callable=AsyncMock) as mock_cache, \
          patch("app.jobs.digest_job.fetch_companies", new_callable=AsyncMock) as mock_fetch, \
          patch("app.jobs.digest_job.save_company_enrichment", new_callable=AsyncMock) as mock_save_enrichment, \
-         _patch_mark_chunks_used():
+         _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = chunks
         mock_extract.return_value = [{"name": "Lean Technologies", "domain": "leantech.me"}]
@@ -158,7 +168,7 @@ async def test_generate_daily_digest_uses_cache_before_fetching():
          patch("app.jobs.digest_job.get_cached_enrichments", new_callable=AsyncMock) as mock_cache, \
          patch("app.jobs.digest_job.fetch_companies", new_callable=AsyncMock) as mock_fetch, \
          patch("app.jobs.digest_job.save_company_enrichment", new_callable=AsyncMock) as mock_save_enrichment, \
-         _patch_mark_chunks_used():
+         _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = chunks
         mock_extract.return_value = [{"name": "Lean Technologies", "domain": "leantech.me"}]
@@ -175,13 +185,64 @@ async def test_generate_daily_digest_uses_cache_before_fetching():
 
 
 @pytest.mark.asyncio
+async def test_generate_daily_digest_delivers_to_subscribers():
+    from app.models.subscriber import Subscriber
+
+    chunks = [_fake_chunk()]
+    subscriber = Subscriber(slack_user_id="U123", topic_ids=["menap_general"])
+
+    with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
+         patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
+         patch("app.jobs.digest_job.get_subscribers_for_topic", new_callable=AsyncMock) as mock_subs, \
+         patch("app.jobs.digest_job.send_dm", new_callable=AsyncMock) as mock_send, \
+         _patch_no_enrichment(), _patch_mark_chunks_used():
+
+        mock_retrieve.return_value = chunks
+        mock_subs.side_effect = lambda tid: [subscriber] if tid == "menap_general" else []
+        mock_send.return_value = True
+        mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
+
+        from app.jobs.digest_job import generate_daily_digest
+        await generate_daily_digest()
+
+    mock_send.assert_awaited_once_with("U123", "## Digest")
+
+
+@pytest.mark.asyncio
+async def test_generate_daily_digest_delivery_failure_does_not_raise():
+    from app.models.subscriber import Subscriber
+
+    chunks = [_fake_chunk()]
+    subscribers = [
+        Subscriber(slack_user_id="U1", topic_ids=["menap_general"]),
+        Subscriber(slack_user_id="U2", topic_ids=["menap_general"]),
+    ]
+
+    with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
+         patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
+         patch("app.jobs.digest_job.get_subscribers_for_topic", new_callable=AsyncMock) as mock_subs, \
+         patch("app.jobs.digest_job.send_dm", new_callable=AsyncMock) as mock_send, \
+         _patch_no_enrichment(), _patch_mark_chunks_used():
+
+        mock_retrieve.return_value = chunks
+        mock_subs.side_effect = lambda tid: subscribers if tid == "menap_general" else []
+        mock_send.side_effect = [False, True]
+        mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
+
+        from app.jobs.digest_job import generate_daily_digest
+        await generate_daily_digest()  # must not raise
+
+    assert mock_send.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_generate_daily_digest_continues_when_enrichment_fails():
     chunks = [_fake_chunk()]
 
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
          patch("app.jobs.digest_job.extract_companies", new_callable=AsyncMock) as mock_extract, \
-         _patch_mark_chunks_used():
+         _patch_mark_chunks_used(), _patch_no_delivery():
 
         mock_retrieve.return_value = chunks
         mock_extract.side_effect = RuntimeError("Claude call failed")
