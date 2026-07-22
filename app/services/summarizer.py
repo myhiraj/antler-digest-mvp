@@ -82,9 +82,10 @@ emerging patterns, notable deals, and founder insights that matter to early-stag
 investors operating in the MENA startup ecosystem.
 
 When given a set of numbered source excerpts, you synthesise them into a structured \
-markdown digest. You do not quote sources verbatim — you paraphrase and surface insight. \
-If a section has no relevant information in the provided context, write \
-"Nothing notable today." for that section rather than hallucinating content."""
+digest formatted in Slack's mrkdwn syntax (not standard markdown). You do not quote \
+sources verbatim — you paraphrase and surface insight. If a section has no relevant \
+information in the provided context, write "Nothing notable today." for that section \
+rather than hallucinating content."""
 
 TOPIC_LABELS = {
     "menap_general": "MENA & Pakistan Startup Ecosystem",
@@ -140,10 +141,10 @@ def _build_user_prompt(
     menap_section = ""
     if topic_id == "menap_general":
         menap_section = """
-### MENA-Specific Highlights
+*MENA-Specific Highlights*
 Regulatory changes, government initiatives, cross-border activity, and anything unique to the MENA operating environment.
 
-**So What?** (one sentence: why does this matter to an early-stage MENA investor?)
+*So What?* (one sentence: why does this matter to an early-stage MENA investor?)
 """
 
     return f"""Today's date: {digest_date.isoformat()}
@@ -156,27 +157,34 @@ Below are {len(chunks)} excerpts from newsletters and news sources ingested toda
 ---
 {enrichment_block}
 
-Using only the information in the excerpts above (plus the company data, if provided), write the daily digest with the following sections in markdown:
+Using only the information in the excerpts above (plus the company data, if provided), write the daily digest with the following sections, formatted for Slack (mrkdwn), NOT standard markdown:
+- Use *text* for bold (single asterisks), never **text**.
+- Use _text_ for italics.
+- Do not use markdown headers (#, ##, ###). Use a bold line as the section title instead, e.g. *Key Deals & Funding*.
+- Use "- " for bullet points, not other bullet characters.
+- For links, use Slack's format <https://example.com|label>, never [label](https://example.com).
 
-### Key Deals & Funding
+Sections:
+
+*Key Deals & Funding*
 Rounds closed, tranches announced, notable investors involved.
 
-**So What?** (one sentence takeaway)
+*So What?* (one sentence takeaway)
 
-### Emerging Trends
+*Emerging Trends*
 Patterns across multiple excerpts — sectors heating up, new geographies, shifting investor thesis.
 
-**So What?** (one sentence takeaway)
+*So What?* (one sentence takeaway)
 
-### Founder Insights
+*Founder Insights*
 Quotes, strategies, or lessons attributed to founders in the excerpts.
 
-**So What?** (one sentence takeaway)
+*So What?* (one sentence takeaway)
 
-### Notable Exits & IPOs
+*Notable Exits & IPOs*
 Acquisitions, secondary sales, public listings — only if present in the context. Otherwise write "Nothing notable today."
 
-**So What?** (one sentence takeaway, or omit if nothing notable)
+*So What?* (one sentence takeaway, or omit if nothing notable)
 {menap_section}
 ---
 Keep each section tight. Use bullet points. No filler. No hallucination."""
