@@ -78,3 +78,28 @@ def test_topic_resolved_to_menap(mock_exists, mock_save, mock_chunk, mock_embed,
     saved_doc = mock_save.call_args[0][0]
     assert saved_doc.topic_id == "menap_general"
     assert saved_doc.source_type == "email"
+
+
+@patch("app.routes.inbound.save_chunks", new_callable=AsyncMock)
+@patch("app.routes.inbound.embed_chunks", return_value=[])
+@patch("app.routes.inbound.chunk_text", return_value=[])
+@patch("app.routes.inbound.save_document", new_callable=AsyncMock)
+@patch("app.routes.inbound.document_exists", new_callable=AsyncMock, return_value=False)
+def test_known_sender_gets_newsletter_url(mock_exists, mock_save, mock_chunk, mock_embed, mock_save_chunks, client):
+    resp = _post(client)
+    assert resp.status_code == 200
+    saved_doc = mock_save.call_args[0][0]
+    assert saved_doc.url == "https://digitaldigest.me"
+
+
+@patch("app.routes.inbound.save_chunks", new_callable=AsyncMock)
+@patch("app.routes.inbound.embed_chunks", return_value=[])
+@patch("app.routes.inbound.chunk_text", return_value=[])
+@patch("app.routes.inbound.save_document", new_callable=AsyncMock)
+@patch("app.routes.inbound.document_exists", new_callable=AsyncMock, return_value=False)
+def test_unknown_sender_gets_no_url(mock_exists, mock_save, mock_chunk, mock_embed, mock_save_chunks, client):
+    payload = {**POSTMARK_PAYLOAD, "From": "someone@unknown-newsletter.com"}
+    resp = _post(client, payload=payload)
+    assert resp.status_code == 200
+    saved_doc = mock_save.call_args[0][0]
+    assert saved_doc.url is None

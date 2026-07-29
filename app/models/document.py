@@ -12,3 +12,4 @@ class Document(BaseModel):
     content_hash: str
     ingested_at: datetime
     published_at: Optional[datetime] = None
+    url: Optional[str] = None

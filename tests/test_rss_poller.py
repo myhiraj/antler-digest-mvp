@@ -11,12 +11,13 @@ os.environ.setdefault("POSTMARK_WEBHOOK_TOKEN", "test-secret")
 from app.jobs.rss_poller import _poll_feed, poll_rss_feeds, RSS_FEEDS
 
 
-def _make_entry(title: str, summary: str, published: datetime) -> MagicMock:
+def _make_entry(title: str, summary: str, published: datetime, link: str = None) -> MagicMock:
     entry = MagicMock()
     entry.get = lambda key, default=None: {
         "title": title,
         "summary": summary,
         "published": format_datetime(published),
+        "link": link,
     }.get(key, default)
     return entry
 
@@ -104,6 +105,30 @@ async def test_entry_with_no_body_skipped(mock_parse, mock_get, mock_set, mock_e
     await _poll_feed("https://example.com/feed", "global_vc", "test_source")
 
     mock_save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("app.jobs.rss_poller.embed_chunks", return_value=[])
+@patch("app.jobs.rss_poller.chunk_text", return_value=[])
+@patch("app.jobs.rss_poller.save_chunks", new_callable=AsyncMock)
+@patch("app.jobs.rss_poller.save_document", new_callable=AsyncMock)
+@patch("app.jobs.rss_poller.document_exists", new_callable=AsyncMock, return_value=False)
+@patch("app.jobs.rss_poller.set_last_polled", new_callable=AsyncMock)
+@patch("app.jobs.rss_poller.get_last_polled", new_callable=AsyncMock, return_value=None)
+@patch("app.jobs.rss_poller.feedparser.parse")
+async def test_entry_link_saved_as_document_url(
+    mock_parse, mock_get, mock_set, mock_exists, mock_save, mock_save_chunks, mock_chunk, mock_embed
+):
+    pub = datetime.now(timezone.utc)
+    mock_parse.return_value = _make_feed(
+        [_make_entry("Article A", "Body of article A", pub, link="https://example.com/article-a")]
+    )
+
+    await _poll_feed("https://example.com/feed", "menap_general", "test_source")
+
+    mock_save.assert_awaited_once()
+    doc = mock_save.call_args[0][0]
+    assert doc.url == "https://example.com/article-a"
 
 
 @pytest.mark.asyncio

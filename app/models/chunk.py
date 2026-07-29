@@ -11,3 +11,5 @@ class Chunk(BaseModel):
     chunk_index: int
     ingested_at: datetime = Field(default_factory=datetime.utcnow)
     used_in_digest: bool = False
+    source_url: Optional[str] = None
+    source_name: Optional[str] = None

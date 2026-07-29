@@ -19,6 +19,15 @@ TOPIC_MAP = {
     "termsheet@fortune.com": "global_vc",
 }
 
+# Newsletters delivered via email don't carry a per-story link the way RSS
+# entries do, so citations fall back to the newsletter's own homepage.
+SENDER_URL_MAP = {
+    "hello@digitaldigest.me": "https://digitaldigest.me",
+    "newsletter@wamda.com": "https://www.wamda.com",
+    "digest@strictlyvc.com": "https://www.strictlyvc.com",
+    "termsheet@fortune.com": "https://fortune.com/newsletter/termsheet/",
+}
+
 
 def resolve_topic(sender: str) -> str:
     lower = sender.lower()
@@ -26,6 +35,14 @@ def resolve_topic(sender: str) -> str:
         if key in lower:
             return topic_id
     return "general"
+
+
+def resolve_source_url(sender: str) -> str | None:
+    lower = sender.lower()
+    for key, url in SENDER_URL_MAP.items():
+        if key in lower:
+            return url
+    return None
 
 
 async def process_document(doc: Document) -> None:
@@ -68,6 +85,7 @@ async def receive_email(request: Request, background_tasks: BackgroundTasks, tok
         content_hash=content_hash,
         ingested_at=received_at,
         published_at=received_at,
+        url=resolve_source_url(sender),
     )
 
     await save_document(doc)

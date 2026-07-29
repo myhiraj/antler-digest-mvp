@@ -85,7 +85,14 @@ When given a set of numbered source excerpts, you synthesise them into a structu
 digest formatted in Slack's mrkdwn syntax (not standard markdown). You do not quote \
 sources verbatim — you paraphrase and surface insight. If a section has no relevant \
 information in the provided context, write "Nothing notable today." for that section \
-rather than hallucinating content."""
+rather than hallucinating content.
+
+Every excerpt is tagged with a source link. Every factual claim you make (a deal, a \
+figure, a quote, a trend) must end with a Slack hyperlink citation back to the excerpt \
+it came from, formatted <url|Source Name>, e.g. "Fintech startup Cashly raised a $4M \
+seed round <https://example.com/article|Wamda>." If a bullet draws on multiple \
+excerpts, cite each one it relies on. Never state a claim without a citation, and never \
+cite a source that doesn't support the claim."""
 
 TOPIC_LABELS = {
     "menap_general": "MENA & Pakistan Startup Ecosystem",
@@ -134,7 +141,9 @@ def _build_user_prompt(
 ) -> str:
     label = TOPIC_LABELS.get(topic_id, topic_id)
     context_blocks = "\n\n".join(
-        f"[{i + 1}] {chunk.text}" for i, chunk in enumerate(chunks)
+        f"[{i + 1}] (source: {chunk.source_name or 'unknown'} | "
+        f"url: {chunk.source_url or 'unavailable'})\n{chunk.text}"
+        for i, chunk in enumerate(chunks)
     )
     enrichment_block = _build_enrichment_block(enrichment or {})
 
@@ -163,6 +172,7 @@ Using only the information in the excerpts above (plus the company data, if prov
 - Do not use markdown headers (#, ##, ###). Use a bold line as the section title instead, e.g. *Key Deals & Funding*.
 - Use "- " for bullet points, not other bullet characters.
 - For links, use Slack's format <https://example.com|label>, never [label](https://example.com).
+- Every claim must end with a citation link back to its source excerpt using that same format, e.g. <https://example.com/article|Wamda>. Use the url given for each excerpt; if an excerpt's url is "unavailable", omit the citation for that specific claim rather than inventing a link.
 
 Sections:
 

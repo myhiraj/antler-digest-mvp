@@ -76,6 +76,7 @@ async def _poll_feed(url: str, topic_id: str, source: str) -> None:
             content_hash=content_hash,
             ingested_at=poll_started_at,
             published_at=published_at,
+            url=entry.get("link") or None,
         )
 
         await save_document(doc)

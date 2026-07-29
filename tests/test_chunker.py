@@ -71,7 +71,7 @@ and is being adapted to the specific dynamics of the MENAP market.
 """.strip()
 
 
-def _make_doc(text: str) -> Document:
+def _make_doc(text: str, url: str = None) -> Document:
     return Document(
         source="test",
         source_type="rss",
@@ -80,6 +80,7 @@ def _make_doc(text: str) -> Document:
         clean_text=text,
         content_hash="testhash",
         ingested_at=datetime.now(timezone.utc),
+        url=url,
     )
 
 
@@ -125,6 +126,14 @@ def test_chunk_metadata_matches_document():
         assert chunk.document_id == doc.content_hash
         assert chunk.topic_id == doc.topic_id
         assert chunk.embedding is None
+
+
+def test_chunk_carries_source_url_and_name():
+    doc = _make_doc(NEWSLETTER_TEXT, url="https://example.com/article")
+    chunks = chunk_text(doc)
+    for chunk in chunks:
+        assert chunk.source_url == "https://example.com/article"
+        assert chunk.source_name == "test"
 
 
 def test_short_document_produces_one_chunk():

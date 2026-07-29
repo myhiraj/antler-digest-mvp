@@ -11,12 +11,20 @@ from app.models.chunk import Chunk
 from app.models.topic_output import TopicOutput
 
 
-def _make_chunk(document_id: str = "doc1", topic_id: str = "menap_general", index: int = 0) -> Chunk:
+def _make_chunk(
+    document_id: str = "doc1",
+    topic_id: str = "menap_general",
+    index: int = 0,
+    source_url: str = None,
+    source_name: str = None,
+) -> Chunk:
     return Chunk(
         document_id=document_id,
         topic_id=topic_id,
         text=f"Startup raised $5M in seed round. Investor led the round. [chunk {index}]",
         chunk_index=index,
+        source_url=source_url,
+        source_name=source_name,
     )
 
 
@@ -235,6 +243,57 @@ async def test_summarize_topic_no_enrichment_section_when_empty():
 
     user_content = captured["messages"][0]["content"]
     assert "Company data" not in user_content
+
+
+@pytest.mark.asyncio
+async def test_user_prompt_includes_source_url_and_name_per_excerpt():
+    chunks = [_make_chunk(source_url="https://example.com/a", source_name="wamda")]
+    captured = {}
+
+    async def capture_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _fake_message()
+
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = capture_create
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        await summarize_topic("menap_general", chunks)
+
+    user_content = captured["messages"][0]["content"]
+    assert "https://example.com/a" in user_content
+    assert "wamda" in user_content
+
+
+@pytest.mark.asyncio
+async def test_user_prompt_marks_missing_url_as_unavailable():
+    chunks = [_make_chunk()]
+    captured = {}
+
+    async def capture_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _fake_message()
+
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = capture_create
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        await summarize_topic("menap_general", chunks)
+
+    user_content = captured["messages"][0]["content"]
+    assert "unavailable" in user_content
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_requires_citations():
+    from app.services.summarizer import SYSTEM_PROMPT
+    assert "citation" in SYSTEM_PROMPT.lower()
 
 
 @pytest.mark.asyncio
