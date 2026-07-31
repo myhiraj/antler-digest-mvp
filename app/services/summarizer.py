@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, date, timezone
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
 
@@ -156,8 +157,15 @@ Regulatory changes, government initiatives, cross-border activity, and anything 
 *So What?* (one sentence: why does this matter to an early-stage MENA investor?)
 """
 
+    dubai_now = datetime.now(ZoneInfo("Asia/Dubai"))
+    formatted_date = dubai_now.strftime("%A, %-d %B %Y")
+
     return f"""Today's date: {digest_date.isoformat()}
 Topic: {label}
+
+The current date and time in Dubai (Asia/Dubai, UTC+4) is: {dubai_now.strftime("%A, %-d %B %Y, %H:%M")}. \
+Use this Dubai date — not "Today's date" above if it differs — as the date for the header below, since the \
+digest is read by a Dubai-based team.
 
 Below are {len(chunks)} excerpts from newsletters and news sources ingested today. Each excerpt is numbered.
 
@@ -173,6 +181,12 @@ Using only the information in the excerpts above (plus the company data, if prov
 - Use "- " for bullet points, not other bullet characters.
 - For links, use Slack's format <https://example.com|label>, never [label](https://example.com).
 - Every claim must end with a citation link back to its source excerpt using that same format, e.g. <https://example.com/article|Wamda>. Use the url given for each excerpt; if an excerpt's url is "unavailable", omit the citation for that specific claim rather than inventing a link.
+
+The message MUST start with exactly these two lines, word-for-word, with nothing before them and a blank line after:
+*Antler MENAP — Daily Intelligence Digest*
+_{label} | {formatted_date}_
+
+Then the sections below, in this exact order.
 
 Sections:
 
