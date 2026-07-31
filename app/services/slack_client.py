@@ -25,7 +25,12 @@ async def send_dm(slack_user_id: str, text: str) -> bool:
     rather than raising, so one bad user ID doesn't stop digest delivery
     to everyone else."""
     try:
-        await _client.chat_postMessage(channel=slack_user_id, text=text)
+        await _client.chat_postMessage(
+            channel=slack_user_id,
+            text=text,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
         return True
     except SlackApiError:
         logger.exception("send_dm: failed to message slack_user_id=%r", slack_user_id)
