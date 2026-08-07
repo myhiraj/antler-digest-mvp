@@ -2,7 +2,7 @@ import logging
 from datetime import date, datetime, timezone
 
 from app.services.retriever import retrieve_chunks
-from app.services.summarizer import summarize_topic, extract_companies
+from app.services.summarizer import summarize_topic, extract_companies, TOPIC_LABELS
 from app.services.harmonic import fetch_companies
 from app.services.document_store import (
     mark_chunks_used,
@@ -12,6 +12,7 @@ from app.services.document_store import (
     get_subscribers_for_topic,
 )
 from app.services.slack_client import send_dm
+from app.services.email_client import send_digest_email
 from app.models.company_enrichment import CompanyEnrichment
 from app.models.topic_output import TopicOutput
 
@@ -62,18 +63,24 @@ async def _get_company_enrichment(chunks) -> dict:
 
 
 async def _deliver_digest(topic_id: str, output: TopicOutput) -> None:
-    """DM the digest to every subscriber of this topic. A failure sending
-    to one user must not stop delivery to the rest."""
+    """DM the digest to every subscriber of this topic, and email it to the
+    static recipient list. A failure sending to one user/address must not
+    stop delivery to the rest."""
     subscribers = await get_subscribers_for_topic(topic_id)
     if not subscribers:
-        logger.info("No subscribers for topic_id=%r, skipping delivery", topic_id)
-        return
+        logger.info("No subscribers for topic_id=%r, skipping Slack delivery", topic_id)
+    else:
+        sent = 0
+        for subscriber in subscribers:
+            if await send_dm(subscriber.slack_user_id, output.summary_text):
+                sent += 1
+        logger.info("Delivered digest for topic_id=%r to %d/%d subscribers", topic_id, sent, len(subscribers))
 
-    sent = 0
-    for subscriber in subscribers:
-        if await send_dm(subscriber.slack_user_id, output.summary_text):
-            sent += 1
-    logger.info("Delivered digest for topic_id=%r to %d/%d subscribers", topic_id, sent, len(subscribers))
+    label = TOPIC_LABELS.get(topic_id, topic_id)
+    subject = f"Antler MENAP Daily Digest — {label} — {output.date.isoformat()}"
+    email_sent = await send_digest_email(subject, output.summary_text)
+    if email_sent:
+        logger.info("Emailed digest for topic_id=%r to %d recipients", topic_id, email_sent)
 
 
 async def generate_daily_digest() -> None:
