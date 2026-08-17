@@ -28,6 +28,16 @@ def _make_chunk(
     )
 
 
+def _fake_tool_message(tool_name: str, tool_input: dict) -> MagicMock:
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = tool_name
+    block.input = tool_input
+    msg = MagicMock()
+    msg.content = [block]
+    return msg
+
+
 def _fake_message(text: str = "## Digest\n- bullet point") -> MagicMock:
     content_block = MagicMock()
     content_block.text = text
@@ -129,8 +139,12 @@ async def test_user_prompt_contains_menap_section_for_menap_general():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        # extract_deals uses tool_choice with a different tool; only capture
+        # the plain summarization call so this test is order-independent.
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -151,8 +165,10 @@ async def test_user_prompt_does_not_contain_menap_section_for_global_vc():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -205,8 +221,10 @@ async def test_summarize_topic_prompt_weaves_in_enrichment_facts():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -229,8 +247,10 @@ async def test_summarize_topic_no_enrichment_section_when_empty():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -251,8 +271,10 @@ async def test_user_prompt_includes_source_url_and_name_per_excerpt():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -274,8 +296,10 @@ async def test_user_prompt_marks_missing_url_as_unavailable():
     captured = {}
 
     async def capture_create(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return _fake_message()
+        if "tool_choice" not in kwargs:
+            captured["messages"] = kwargs["messages"]
+            return _fake_message()
+        return _fake_tool_message("extract_deals", {"deals": []})
 
     with patch("app.services.summarizer._client") as mock_client, \
          patch("app.services.summarizer.document_store") as mock_store:
@@ -325,3 +349,72 @@ async def test_extract_companies_empty_chunks_skips_api_call():
 
     mock_client.messages.create.assert_not_called()
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_extract_deals_returns_tool_input():
+    chunks = [_make_chunk(source_url="https://example.com/a", source_name="wamda")]
+    deal = {
+        "company": "Fincart",
+        "country": "Egypt",
+        "round": "Seed",
+        "amount": "$2.8M",
+        "investors": "Plus VC, Jedar Capital",
+        "source_url": "https://example.com/a",
+        "source_name": "wamda",
+    }
+    message = _fake_tool_message("extract_deals", {"deals": [deal]})
+
+    with patch("app.services.summarizer._client") as mock_client:
+        mock_client.messages.create = AsyncMock(return_value=message)
+
+        from app.services.summarizer import extract_deals
+        result = await extract_deals(chunks)
+
+    assert result == [deal]
+
+
+@pytest.mark.asyncio
+async def test_extract_deals_empty_chunks_skips_api_call():
+    with patch("app.services.summarizer._client") as mock_client:
+        mock_client.messages.create = AsyncMock()
+
+        from app.services.summarizer import extract_deals
+        result = await extract_deals([])
+
+    mock_client.messages.create.assert_not_called()
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_extract_deals_returns_empty_on_client_error():
+    chunks = [_make_chunk()]
+    with patch("app.services.summarizer._client") as mock_client:
+        mock_client.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+
+        from app.services.summarizer import extract_deals
+        result = await extract_deals(chunks)  # must not raise
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_summarize_topic_populates_deals():
+    chunks = [_make_chunk()]
+    deal = {"company": "Fincart", "round": "Seed"}
+
+    async def fake_create(**kwargs):
+        if "tool_choice" in kwargs:
+            return _fake_tool_message("extract_deals", {"deals": [deal]})
+        return _fake_message()
+
+    with patch("app.services.summarizer._client") as mock_client, \
+         patch("app.services.summarizer.document_store") as mock_store:
+
+        mock_client.messages.create = fake_create
+        mock_store.save_topic_output = AsyncMock()
+
+        from app.services.summarizer import summarize_topic
+        result = await summarize_topic("menap_general", chunks)
+
+    assert result.deals == [deal]

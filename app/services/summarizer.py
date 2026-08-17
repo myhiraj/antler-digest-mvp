@@ -43,6 +43,76 @@ EXTRACT_COMPANIES_TOOL = {
 }
 
 
+EXTRACT_DEALS_TOOL = {
+    "name": "extract_deals",
+    "description": (
+        "Record every funding round announcement found in the source excerpts, "
+        "as structured fields for a table. Only include rounds explicitly stated "
+        "in the excerpts — do not infer or estimate amounts."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "deals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "company": {"type": "string"},
+                        "country": {"type": "string", "description": "Omit if not stated."},
+                        "round": {"type": "string", "description": "e.g. 'Seed', 'Series A'."},
+                        "amount": {"type": "string", "description": "As reported, e.g. '$2.8M'. Omit if undisclosed."},
+                        "investors": {"type": "string", "description": "Comma-separated investor names."},
+                        "source_url": {"type": "string"},
+                        "source_name": {"type": "string"},
+                    },
+                    "required": ["company", "round"],
+                },
+            }
+        },
+        "required": ["deals"],
+    },
+}
+
+
+async def extract_deals(chunks: List[Chunk]) -> List[Dict[str, str]]:
+    """Ask Claude to pull structured funding-round data out of the chunks, for
+    rendering as an HTML table in the digest email. Returns [] on failure or
+    empty input; never raises."""
+    if not chunks:
+        return []
+
+    context_blocks = "\n\n".join(
+        f"[{i + 1}] (source: {c.source_name or 'unknown'} | url: {c.source_url or 'unavailable'})\n{c.text}"
+        for i, c in enumerate(chunks)
+    )
+
+    try:
+        message = await _client.messages.create(
+            model=MODEL,
+            max_tokens=1536,
+            tools=[EXTRACT_DEALS_TOOL],
+            tool_choice={"type": "tool", "name": "extract_deals"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Extract every funding round announcement from these excerpts, "
+                        "with its source url/name.\n\n---\n" + context_blocks
+                    ),
+                }
+            ],
+        )
+    except Exception:
+        logger.exception("extract_deals: Claude call failed")
+        return []
+
+    for block in message.content:
+        if block.type == "tool_use" and block.name == "extract_deals":
+            return block.input.get("deals", [])
+    return []
+
+
 async def extract_companies(chunks: List[Chunk]) -> List[Dict[str, str]]:
     """Ask Claude to identify companies mentioned in the chunks and their
     website domains, so they can be looked up in Harmonic. Returns a list
@@ -244,6 +314,7 @@ async def summarize_topic(
     summary_text = message.content[0].text
 
     sources_used = list({c.document_id for c in chunks})
+    deals = await extract_deals(chunks)
 
     output = TopicOutput(
         topic_id=topic_id,
@@ -254,6 +325,7 @@ async def summarize_topic(
         model_used=MODEL,
         chunk_count=len(chunks),
         companies_enriched=list((enrichment or {}).keys()),
+        deals=deals,
     )
     await document_store.save_topic_output(output)
     return output

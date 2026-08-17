@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime, date
-from typing import List
+from typing import Any, Dict, List
 
 
 class TopicOutput(BaseModel):
@@ -12,3 +12,4 @@ class TopicOutput(BaseModel):
     model_used: str = "claude-sonnet-4-6"
     chunk_count: int = 0
     companies_enriched: List[str] = []
+    deals: List[Dict[str, Any]] = []

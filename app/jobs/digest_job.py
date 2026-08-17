@@ -13,6 +13,8 @@ from app.services.document_store import (
 )
 from app.services.slack_client import send_dm
 from app.services.email_client import send_digest_email
+from app.services.notion_sync import sync_to_notion
+from app.services.digest_drive_writer import write_digest_to_drive
 from app.models.company_enrichment import CompanyEnrichment
 from app.models.topic_output import TopicOutput
 
@@ -78,9 +80,14 @@ async def _deliver_digest(topic_id: str, output: TopicOutput) -> None:
 
     label = TOPIC_LABELS.get(topic_id, topic_id)
     subject = f"Antler MENAP Daily Digest — {label} — {output.date.isoformat()}"
-    email_sent = await send_digest_email(subject, output.summary_text)
+    email_sent = await send_digest_email(subject, output.summary_text, output.deals)
     if email_sent:
         logger.info("Emailed digest for topic_id=%r to %d recipients", topic_id, email_sent)
+
+    try:
+        await write_digest_to_drive(label, output)
+    except Exception:
+        logger.exception("write_digest_to_drive failed for topic_id=%r", topic_id)
 
 
 async def generate_daily_digest() -> None:
@@ -92,6 +99,12 @@ async def generate_daily_digest() -> None:
             enrichment = await _get_company_enrichment(chunks)
             output = await summarize_topic(topic_id, chunks, enrichment)
             await mark_chunks_used(chunks)
+
+            try:
+                await sync_to_notion(topic_id, chunks)
+            except Exception:
+                logger.exception("Notion sync failed for topic_id=%r", topic_id)
+
             logger.info(
                 "Digest generated: topic=%r chunks=%d companies_enriched=%d date=%s",
                 topic_id,

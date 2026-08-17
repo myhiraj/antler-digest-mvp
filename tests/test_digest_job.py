@@ -41,6 +41,12 @@ def _patch_mark_chunks_used():
     return patch("app.jobs.digest_job.mark_chunks_used", new_callable=AsyncMock)
 
 
+def _patch_no_notion_sync():
+    """sync_to_notion hits real Notion if unmocked; no-op it for tests that
+    aren't specifically checking Notion wiring."""
+    return patch("app.jobs.digest_job.sync_to_notion", new_callable=AsyncMock)
+
+
 def _patch_no_delivery():
     """get_subscribers_for_topic hits real Mongo if unmocked. Return no
     subscribers so _deliver_digest short-circuits without touching Slack."""
@@ -55,7 +61,7 @@ def _patch_no_delivery():
 async def test_generate_daily_digest_calls_both_topics():
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = [_fake_chunk()]
         mock_summarize.side_effect = lambda tid, _chunks, _enrichment=None: _fake_output(tid)
@@ -76,7 +82,7 @@ async def test_generate_daily_digest_passes_chunks_to_summarizer():
 
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
@@ -100,7 +106,7 @@ async def test_generate_daily_digest_continues_on_topic_failure():
 
     with patch("app.jobs.digest_job.retrieve_chunks", side_effect=flaky_retrieve), \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
 
@@ -116,7 +122,7 @@ async def test_generate_daily_digest_continues_on_topic_failure():
 async def test_generate_daily_digest_uses_broad_query():
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
-         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = []
         mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
@@ -140,7 +146,7 @@ async def test_generate_daily_digest_enriches_companies_from_harmonic():
          patch("app.jobs.digest_job.get_cached_enrichments", new_callable=AsyncMock) as mock_cache, \
          patch("app.jobs.digest_job.fetch_companies", new_callable=AsyncMock) as mock_fetch, \
          patch("app.jobs.digest_job.save_company_enrichment", new_callable=AsyncMock) as mock_save_enrichment, \
-         _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_extract.return_value = [{"name": "Lean Technologies", "domain": "leantech.me"}]
@@ -168,7 +174,7 @@ async def test_generate_daily_digest_uses_cache_before_fetching():
          patch("app.jobs.digest_job.get_cached_enrichments", new_callable=AsyncMock) as mock_cache, \
          patch("app.jobs.digest_job.fetch_companies", new_callable=AsyncMock) as mock_fetch, \
          patch("app.jobs.digest_job.save_company_enrichment", new_callable=AsyncMock) as mock_save_enrichment, \
-         _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_extract.return_value = [{"name": "Lean Technologies", "domain": "leantech.me"}]
@@ -195,7 +201,7 @@ async def test_generate_daily_digest_delivers_to_subscribers():
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
          patch("app.jobs.digest_job.get_subscribers_for_topic", new_callable=AsyncMock) as mock_subs, \
          patch("app.jobs.digest_job.send_dm", new_callable=AsyncMock) as mock_send, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_subs.side_effect = lambda tid: [subscriber] if tid == "menap_general" else []
@@ -222,7 +228,7 @@ async def test_generate_daily_digest_delivery_failure_does_not_raise():
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
          patch("app.jobs.digest_job.get_subscribers_for_topic", new_callable=AsyncMock) as mock_subs, \
          patch("app.jobs.digest_job.send_dm", new_callable=AsyncMock) as mock_send, \
-         _patch_no_enrichment(), _patch_mark_chunks_used():
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_subs.side_effect = lambda tid: subscribers if tid == "menap_general" else []
@@ -242,7 +248,7 @@ async def test_generate_daily_digest_continues_when_enrichment_fails():
     with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
          patch("app.jobs.digest_job.extract_companies", new_callable=AsyncMock) as mock_extract, \
-         _patch_mark_chunks_used(), _patch_no_delivery():
+         _patch_mark_chunks_used(), _patch_no_delivery(), _patch_no_notion_sync():
 
         mock_retrieve.return_value = chunks
         mock_extract.side_effect = RuntimeError("Claude call failed")
@@ -254,3 +260,45 @@ async def test_generate_daily_digest_continues_when_enrichment_fails():
     assert mock_summarize.call_count == 2
     for c in mock_summarize.call_args_list:
         assert c.args[2] == {}
+
+
+@pytest.mark.asyncio
+async def test_generate_daily_digest_calls_notion_sync_per_topic():
+    chunks = [_fake_chunk()]
+
+    with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
+         patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
+         patch("app.jobs.digest_job.sync_to_notion", new_callable=AsyncMock) as mock_sync, \
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+
+        mock_retrieve.return_value = chunks
+        mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
+
+        from app.jobs.digest_job import generate_daily_digest
+        await generate_daily_digest()
+
+    assert mock_sync.await_count == 2
+    called_topics = [c.args[0] for c in mock_sync.await_args_list]
+    assert "menap_general" in called_topics
+    assert "global_vc" in called_topics
+    for c in mock_sync.await_args_list:
+        assert c.args[1] == chunks
+
+
+@pytest.mark.asyncio
+async def test_generate_daily_digest_continues_when_notion_sync_fails():
+    chunks = [_fake_chunk()]
+
+    with patch("app.jobs.digest_job.retrieve_chunks", new_callable=AsyncMock) as mock_retrieve, \
+         patch("app.jobs.digest_job.summarize_topic", new_callable=AsyncMock) as mock_summarize, \
+         patch("app.jobs.digest_job.sync_to_notion", new_callable=AsyncMock) as mock_sync, \
+         _patch_no_enrichment(), _patch_mark_chunks_used(), _patch_no_delivery():
+
+        mock_retrieve.return_value = chunks
+        mock_sync.side_effect = RuntimeError("Notion is down")
+        mock_summarize.side_effect = lambda tid, ch, enrichment=None: _fake_output(tid)
+
+        from app.jobs.digest_job import generate_daily_digest
+        await generate_daily_digest()  # must not raise
+
+    assert mock_summarize.call_count == 2

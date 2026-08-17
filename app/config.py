@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     harmonic_api_key: str = ""
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
+    notion_api_key: str = ""
+    notion_themes_database_id: str = ""
+    notion_evidence_database_id: str = ""
+    google_service_account_json: str = ""
+    google_drive_folder_id: str = ""
 
     @property
     def mongodb_uri_with_tls(self) -> str:
