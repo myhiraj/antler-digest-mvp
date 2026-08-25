@@ -75,6 +75,17 @@ async def get_latest_topic_output(topic_id: str) -> Optional[TopicOutput]:
     return TopicOutput(**doc)
 
 
+async def get_topic_output_for_date(topic_id: str, for_date) -> Optional[TopicOutput]:
+    query_date = datetime(for_date.year, for_date.month, for_date.day, tzinfo=timezone.utc)
+    doc = await _topic_outputs.find_one({"topic_id": topic_id, "date": query_date})
+    if doc is None:
+        return None
+    doc.pop("_id", None)
+    if isinstance(doc.get("date"), datetime):
+        doc["date"] = doc["date"].date()
+    return TopicOutput(**doc)
+
+
 async def mark_chunks_used(chunks: List[Chunk]) -> None:
     if not chunks:
         return

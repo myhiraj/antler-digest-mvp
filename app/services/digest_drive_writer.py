@@ -141,7 +141,15 @@ def _find_existing_doc(service, title: str) -> str | None:
         f"'{settings.google_drive_folder_id}' in parents and "
         "trashed = false"
     )
-    response = service.files().list(q=query, fields="files(id)", pageSize=1).execute()
+    response = service.files().list(
+        q=query,
+        fields="files(id)",
+        pageSize=1,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+        corpora="drive",
+        driveId=settings.google_drive_folder_id,
+    ).execute()
     files = response.get("files", [])
     return files[0]["id"] if files else None
 
@@ -167,6 +175,7 @@ async def write_digest_to_drive(topic_label: str, output: TopicOutput) -> None:
             service.files().update(
                 fileId=existing_id,
                 media_body=media_body,
+                supportsAllDrives=True,
             ).execute()
             logger.info("write_digest_to_drive: updated existing doc %r (id=%s)", title, existing_id)
         else:
@@ -179,6 +188,8 @@ async def write_digest_to_drive(topic_label: str, output: TopicOutput) -> None:
                 body=file_metadata,
                 media_body=media_body,
                 fields="id",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
             ).execute()
             logger.info("write_digest_to_drive: created doc %r (id=%s)", title, created.get("id"))
     except HttpError:
