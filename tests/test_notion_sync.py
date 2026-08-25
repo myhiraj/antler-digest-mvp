@@ -302,6 +302,139 @@ async def test_review_uncategorized_skips_below_cluster_threshold():
     mock_anthropic.messages.create.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# normalize_geography
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("UAE", "UAE"),
+        ("United Arab Emirates", "UAE"),
+        ("united arab emirates", "UAE"),
+        ("uae", "UAE"),
+        ("KSA", "Saudi Arabia"),
+        ("Saudi", "Saudi Arabia"),
+        ("Egypt", "Egypt"),
+        ("Pakistan", "Pakistan"),  # no alias — passed through as-is
+        ("", "Global"),
+        (None, "Global"),
+    ],
+)
+def test_normalize_geography(raw, expected):
+    assert notion_sync.normalize_geography(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_create_theme_normalizes_geography_variant():
+    with patch("app.services.notion_sync._notion_client") as mock_notion, _patch_notion_configured():
+        mock_notion.pages.create = AsyncMock(return_value={"id": "t1"})
+        await notion_sync._create_theme(
+            title="UAE fintech regulation",
+            category="Policy & Regulation",
+            geography="United Arab Emirates",
+            topic_id="menap_general",
+        )
+
+    call_kwargs = mock_notion.pages.create.await_args.kwargs
+    assert call_kwargs["properties"]["Geography"]["select"]["name"] == "UAE"
+
+
+# ---------------------------------------------------------------------------
+# summarize_source (Smart Brevity)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_summarize_source_formats_lede_why_bullets():
+    tool_input = {
+        "lede": "Keyper raised $11M in a Series A.",
+        "why_it_matters": "UAE proptech is attracting later-stage checks.",
+        "bullets": ["Led by Speedinvest", "Third UAE proptech round this month"],
+    }
+    message = _fake_tool_message("summarize_source", tool_input)
+
+    with patch("app.services.notion_sync._anthropic_client") as mock_client:
+        mock_client.messages.create = AsyncMock(return_value=message)
+        result = await notion_sync.summarize_source("Keyper raised $11M...")
+
+    assert result.startswith("Keyper raised $11M in a Series A.")
+    assert "Why it matters: UAE proptech is attracting later-stage checks." in result
+    assert "• Led by Speedinvest" in result
+    assert "• Third UAE proptech round this month" in result
+
+
+@pytest.mark.asyncio
+async def test_summarize_source_empty_text_skips_api_call():
+    with patch("app.services.notion_sync._anthropic_client") as mock_client:
+        mock_client.messages.create = AsyncMock()
+        result = await notion_sync.summarize_source("")
+
+    mock_client.messages.create.assert_not_called()
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_summarize_source_returns_empty_on_error():
+    with patch("app.services.notion_sync._anthropic_client") as mock_client:
+        mock_client.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+        result = await notion_sync.summarize_source("some text")  # must not raise
+
+    assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# _create_evidence — industry + source summary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_evidence_writes_industry_and_source_summary():
+    signal = {
+        "title": "New fintech licensing framework",
+        "industry": "Fintech",
+        "source_name": "Wamda",
+        "source_url": "https://example.com/a",
+        "source_excerpt_text": "Regulator announces new fintech licensing framework.",
+        "topic_id": "menap_general",
+    }
+    summary_message = _fake_tool_message(
+        "summarize_source",
+        {"lede": "Regulator announces new licensing framework.", "why_it_matters": "Lowers entry barriers.", "bullets": ["Applies to digital lenders"]},
+    )
+
+    with patch("app.services.notion_sync._notion_client") as mock_notion, \
+         patch("app.services.notion_sync._anthropic_client") as mock_anthropic, \
+         _patch_notion_configured():
+        mock_notion.pages.create = AsyncMock(return_value={"id": "e1"})
+        mock_anthropic.messages.create = AsyncMock(return_value=summary_message)
+
+        await notion_sync._create_evidence(signal, "theme-1")
+
+    call_kwargs = mock_notion.pages.create.await_args.kwargs
+    assert call_kwargs["properties"]["Industry"]["select"]["name"] == "Fintech"
+    summary_text = call_kwargs["properties"]["Source Summary"]["rich_text"][0]["text"]["content"]
+    assert "Regulator announces new licensing framework." in summary_text
+    assert "Why it matters: Lowers entry barriers." in summary_text
+
+
+@pytest.mark.asyncio
+async def test_create_evidence_defaults_industry_to_other():
+    signal = {"title": "x", "topic_id": "menap_general"}
+
+    with patch("app.services.notion_sync._notion_client") as mock_notion, \
+         patch("app.services.notion_sync._anthropic_client") as mock_anthropic, \
+         _patch_notion_configured():
+        mock_notion.pages.create = AsyncMock(return_value={"id": "e1"})
+        mock_anthropic.messages.create = AsyncMock()
+
+        await notion_sync._create_evidence(signal, "theme-1")
+
+    call_kwargs = mock_notion.pages.create.await_args.kwargs
+    assert call_kwargs["properties"]["Industry"]["select"]["name"] == "Other"
+
+
 @pytest.mark.asyncio
 async def test_review_uncategorized_promotes_cluster_to_new_theme():
     items = [_notion_page(f"e{i}", f"item {i}") for i in range(3)]

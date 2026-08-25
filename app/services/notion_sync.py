@@ -22,16 +22,55 @@ CATEGORIES = [
     "Market & Sector Trend",
     "Ecosystem Move",
     "Founder Insight",
+    "New Fund Launched",
 ]
+
+INDUSTRIES = [
+    "Fintech",
+    "Proptech",
+    "Healthtech",
+    "Edtech",
+    "AI & Enterprise Software",
+    "E-commerce & Retail",
+    "Logistics & Mobility",
+    "Climate & Energy",
+    "Consumer & Media",
+    "Cybersecurity",
+    "Other",
+]
+
+# Canonical geography names — the model is free-texting this field, so
+# near-duplicate variants (e.g. "UAE" vs "United Arab Emirates") drift in
+# over time unless normalized before writing to Notion.
+GEOGRAPHY_ALIASES = {
+    "uae": "UAE",
+    "united arab emirates": "UAE",
+    "ksa": "Saudi Arabia",
+    "saudi": "Saudi Arabia",
+    "kingdom of saudi arabia": "Saudi Arabia",
+    "egypt": "Egypt",
+    "arab republic of egypt": "Egypt",
+}
+
+
+def normalize_geography(geography: str) -> str:
+    """Map free-text geography strings to a single canonical name so the
+    Theme database's Geography select doesn't accumulate near-duplicates
+    (e.g. "UAE" and "United Arab Emirates" as separate values)."""
+    if not geography:
+        return "Global"
+    return GEOGRAPHY_ALIASES.get(geography.strip().lower(), geography.strip())
+
 
 EXTRACT_SIGNALS_TOOL = {
     "name": "extract_signals",
     "description": (
-        "Record notable non-funding-round signals found in the source excerpts: "
-        "policy/regulatory announcements, market or sector trends, ecosystem moves "
-        "(accelerator launches, fund news, key people moves, M&A), and founder insights. "
-        "Do not record plain funding-round announcements with no broader signal attached — "
-        "those are tracked elsewhere."
+        "Record notable signals found in the source excerpts: policy/regulatory "
+        "announcements, market or sector trends, ecosystem moves (accelerator "
+        "launches, key people moves, M&A), founder insights, and new VC/PE fund "
+        "launches (a fund manager closing or announcing a new fund to invest FROM — "
+        "not a startup raising a round). Do not record plain startup funding-round "
+        "announcements with no broader signal attached — those are tracked elsewhere."
     ),
     "input_schema": {
         "type": "object",
@@ -42,6 +81,11 @@ EXTRACT_SIGNALS_TOOL = {
                     "type": "object",
                     "properties": {
                         "category": {"type": "string", "enum": CATEGORIES},
+                        "industry": {
+                            "type": "string",
+                            "enum": INDUSTRIES,
+                            "description": "The specific startup/market industry this signal is about.",
+                        },
                         "geography": {
                             "type": "string",
                             "description": "Country, or 'Global' if not region-specific.",
@@ -55,7 +99,7 @@ EXTRACT_SIGNALS_TOOL = {
                             "description": "A concise paraphrase of the observation, 1-2 sentences.",
                         },
                     },
-                    "required": ["category", "geography", "title", "excerpt"],
+                    "required": ["category", "industry", "geography", "title", "excerpt"],
                 },
             }
         },
@@ -137,8 +181,83 @@ REVIEW_UNCATEGORIZED_TOOL = {
 }
 
 
+SUMMARIZE_SOURCE_TOOL = {
+    "name": "summarize_source",
+    "description": (
+        "Write a Smart Brevity-style summary of a source excerpt: a short bold "
+        "lede sentence stating the news, then a 'Why it matters' line, then 2-4 "
+        "terse bullet points with the key facts. No filler, no throat-clearing."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "lede": {
+                "type": "string",
+                "description": "One short, punchy sentence stating what happened. No more than ~20 words.",
+            },
+            "why_it_matters": {
+                "type": "string",
+                "description": "One sentence: why this is relevant to an early-stage MENA investor.",
+            },
+            "bullets": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "2-4 short bullet points with the key supporting facts/numbers.",
+            },
+        },
+        "required": ["lede", "why_it_matters", "bullets"],
+    },
+}
+
+
 def _rich_text(value: str) -> List[Dict[str, Any]]:
     return [{"type": "text", "text": {"content": value[:2000]}}]
+
+
+def _format_smart_brevity(summary: Dict[str, Any]) -> str:
+    lede = summary.get("lede", "").strip()
+    why = summary.get("why_it_matters", "").strip()
+    bullets = summary.get("bullets") or []
+
+    lines = [lede]
+    if why:
+        lines.append(f"Why it matters: {why}")
+    for bullet in bullets:
+        lines.append(f"• {bullet}")
+    return "\n".join(line for line in lines if line)
+
+
+async def summarize_source(excerpt_text: str) -> str:
+    """Summarize a source excerpt in Axios Smart Brevity style (bold lede,
+    'Why it matters', terse bullets) for the Evidence row's Source Summary
+    field. Returns "" on failure or empty input; never raises."""
+    if not excerpt_text:
+        return ""
+
+    try:
+        message = await _anthropic_client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            tools=[SUMMARIZE_SOURCE_TOOL],
+            tool_choice={"type": "tool", "name": "summarize_source"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarize this source excerpt per the tool's description "
+                        "(Axios Smart Brevity style):\n\n---\n" + excerpt_text
+                    ),
+                }
+            ],
+        )
+    except Exception:
+        logger.exception("summarize_source: Claude call failed")
+        return ""
+
+    for block in message.content:
+        if block.type == "tool_use" and block.name == "summarize_source":
+            return _format_smart_brevity(block.input)
+    return ""
 
 
 async def extract_signals(chunks: List[Chunk]) -> List[Dict[str, Any]]:
@@ -182,6 +301,7 @@ async def extract_signals(chunks: List[Chunk]) -> List[Dict[str, Any]]:
                 signal.setdefault("source_url", chunk.source_url)
                 signal.setdefault("source_name", chunk.source_name)
                 signal.setdefault("topic_id", chunk.topic_id)
+                signal.setdefault("source_excerpt_text", chunk.text)
             return signals
     return []
 
@@ -246,7 +366,7 @@ async def _create_theme(title: str, category: str, geography: str, topic_id: str
             properties={
                 "Title": {"title": _rich_text(title)},
                 "Category": {"select": {"name": category}},
-                "Geography": {"select": {"name": geography or "Global"}},
+                "Geography": {"select": {"name": normalize_geography(geography)}},
                 "Topic": {"select": {"name": topic_id}},
                 "Status": {"select": {"name": "Active"}},
                 "First Seen": {"date": {"start": now}},
@@ -276,14 +396,18 @@ async def _create_evidence(signal: Dict[str, Any], theme_id: str) -> Optional[st
     if not _notion_client or not settings.notion_evidence_database_id:
         return None
 
+    source_summary = await summarize_source(signal.get("source_excerpt_text") or signal.get("excerpt") or "")
+
     try:
         page = await _notion_client.pages.create(
             parent={"database_id": settings.notion_evidence_database_id},
             properties={
                 "Title": {"title": _rich_text(signal.get("title", ""))},
                 "Theme": {"relation": [{"id": theme_id}]},
+                "Industry": {"select": {"name": signal.get("industry") or "Other"}},
                 "Source Name": {"rich_text": _rich_text(signal.get("source_name") or "")},
                 "Source URL": {"url": signal.get("source_url") or None},
+                "Source Summary": {"rich_text": _rich_text(source_summary)},
                 "Date": {"date": {"start": datetime.now(timezone.utc).date().isoformat()}},
                 "Topic": {"select": {"name": signal.get("topic_id", "")}},
             },
