@@ -189,7 +189,6 @@ async def write_digest_to_drive(topic_label: str, output: TopicOutput) -> None:
                 media_body=media_body,
                 fields="id",
                 supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
             ).execute()
             logger.info("write_digest_to_drive: created doc %r (id=%s)", title, created.get("id"))
     except HttpError:
